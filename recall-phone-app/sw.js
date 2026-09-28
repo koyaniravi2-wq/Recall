@@ -1,14 +1,15 @@
 /* Recall service worker — offline-first app shell.
  * Stale-while-revalidate: serves from cache instantly (fast + offline),
  * refreshes the cache in the background so the next launch is up to date. */
-const CACHE = "recall-cache-v1";
+const CACHE = "recall-cache-v2";
 
 self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
-
-/* ---------------- daily "Idea of the day" notification -------------------
- * Uses Periodic Background Sync (Android Chrome, installed PWA). Picks the
- * same deterministic idea-of-the-day as the app UI and shows it once a day. */
+self.addEventListener("activate", (e) => e.waitUntil((async () => {
+  const names = await caches.keys();
+  await Promise.all(names.filter((name) => name.startsWith("recall-cache-") && name !== CACHE)
+    .map((name) => caches.delete(name)));
+  await self.clients.claim();
+})()));
 
 function dayKey(d = new Date()) {
   const p = (x) => String(x).padStart(2, "0");
@@ -31,43 +32,68 @@ function readStore() {
   });
 }
 
-async function showDailyIdea(force) {
+/* ---------------- Everyday execution reminders --------------------------
+ * Periodic Background Sync is best-effort (Android decides the exact wake
+ * time), so we use a 20-minute grace window and de-duplicate each reminder.
+ * The foreground app supplies exact minute checks while Recall is open. */
+async function showPracticeReminders(force) {
   const store = await readStore();
   if (!store || !store.recall_data_v2) return;
   let data; try { data = JSON.parse(store.recall_data_v2); } catch (e) { return; }
-  const notes = Array.isArray(data.notes) ? data.notes : [];
-  if (!notes.length) return;
-  const k = dayKey();
-  if (!force && store["recall.lastIdeaNotif"] === k) return;   // once per day
-  let h = 0;
-  for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) % 99991;
-  const n = notes[h % notes.length];
-  const body = String(n.takeaway || n.content || "").replace(/==/g, "").slice(0, 140);
-  await self.registration.showNotification("💡 Idea of the day", {
-    body: n.title + (body ? "\n" + body : ""),
-    tag: "recall-daily-idea",
-    icon: "./icons/icon-192.png",
-    badge: "./icons/icon-192.png",
-    data: { noteId: n.id },
-  });
-  // remember we already notified today
-  try {
-    const req = indexedDB.open("recall-db", 1);
-    req.onsuccess = () => {
-      store["recall.lastIdeaNotif"] = k;
-      try { req.result.transaction("kv", "readwrite").objectStore("kv").put(store, "store"); }
-      catch (e) {}
-    };
-  } catch (e) {}
+  const practices = Array.isArray(data.practices)
+    ? data.practices.filter((p) => p && !p.archivedAt) : [];
+  if (!practices.length) return;
+  const now = new Date();
+  const today = dayKey(now);
+  const dayLog = (data.practiceLog && data.practiceLog[today]) || {};
+  const done = new Set(Array.isArray(dayLog) ? dayLog
+    : Object.entries(dayLog).filter(([, state]) => state && state.done).map(([id]) => id));
+  const minute = now.getHours() * 60 + now.getMinutes();
+  const sent = store["recall.practiceReminderSent"] || {};
+  let changed = false;
+
+  for (const p of practices) {
+    if (done.has(p.id)) continue;
+    const times = Array.isArray(p.reminders) ? p.reminders : [];
+    for (const time of times) {
+      const parts = String(time).split(":").map(Number);
+      if (parts.length !== 2 || parts.some(Number.isNaN)) continue;
+      const dueMinute = parts[0] * 60 + parts[1];
+      if (!force && (minute < dueMinute || minute > dueMinute + 20)) continue;
+      const key = today + "." + p.id + "." + time;
+      if (!force && sent[key]) continue;
+      await self.registration.showNotification("Recall · Everyday", {
+        body: (p.sourceTitle || p.remember || "Idea") + "\n" + (p.execution || "Open your plan"),
+        tag: "recall-practice-" + p.id + "-" + time,
+        icon: "./icons/icon-192.png",
+        badge: "./icons/icon-192.png",
+        data: { practiceId: p.id, view: "everyday" },
+      });
+      sent[key] = true; changed = true;
+      if (force) break;
+    }
+    if (force && changed) break;
+  }
+
+  if (changed) {
+    store["recall.practiceReminderSent"] = sent;
+    try {
+      const req = indexedDB.open("recall-db", 1);
+      req.onsuccess = () => {
+        try { req.result.transaction("kv", "readwrite").objectStore("kv").put(store, "store"); }
+        catch (e) {}
+      };
+    } catch (e) {}
+  }
 }
 
 self.addEventListener("periodicsync", (e) => {
-  if (e.tag === "recall-daily-idea") e.waitUntil(showDailyIdea(false));
+  if (e.tag === "recall-practice-reminders") e.waitUntil(showPracticeReminders(false));
 });
 
 self.addEventListener("message", (e) => {
-  if (e.data === "recall-test-notification") showDailyIdea(true);
-  if (e.data === "recall-daily-check") showDailyIdea(false);
+  if (e.data === "recall-practice-check") showPracticeReminders(false);
+  if (e.data === "recall-practice-test") showPracticeReminders(true);
 });
 
 self.addEventListener("notificationclick", (e) => {

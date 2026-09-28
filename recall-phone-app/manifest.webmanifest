@@ -1,7 +1,7 @@
 {
-  "name": "Recall",
+  "name": "Recall Phone",
   "short_name": "Recall",
-  "description": "Spaced-repetition idea notes",
+  "description": "Read ideas and execute them every day",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

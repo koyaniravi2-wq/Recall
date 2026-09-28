@@ -1,7 +1,7 @@
 /* Recall service worker — offline-first app shell.
  * Stale-while-revalidate: serves from cache instantly (fast + offline),
  * refreshes the cache in the background so the next launch is up to date. */
-const CACHE = "recall-cache-v3";
+const CACHE = "recall-cache-v4";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil((async () => {
@@ -99,9 +99,13 @@ self.addEventListener("message", (e) => {
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
   e.waitUntil((async () => {
+    const target = "./?open=everyday";
     const list = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    if (list.length) return list[0].focus();
-    return self.clients.openWindow("./");
+    if (list.length) {
+      try { await list[0].navigate(target); } catch (err) {}
+      return list[0].focus();
+    }
+    return self.clients.openWindow(target);
   })());
 });
 

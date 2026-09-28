@@ -1,7 +1,7 @@
 /* Recall service worker — offline-first app shell.
  * Stale-while-revalidate: serves from cache instantly (fast + offline),
  * refreshes the cache in the background so the next launch is up to date. */
-const CACHE = "recall-cache-v4";
+const CACHE = "recall-cache-v5";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil((async () => {

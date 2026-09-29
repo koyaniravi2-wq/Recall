@@ -1,7 +1,7 @@
 /* Recall service worker — offline-first app shell.
  * Stale-while-revalidate: serves from cache instantly (fast + offline),
  * refreshes the cache in the background so the next launch is up to date. */
-const CACHE = "recall-cache-v5";
+const CACHE = "recall-cache-v6";
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil((async () => {
@@ -41,7 +41,8 @@ async function showPracticeReminders(force) {
   if (!store || !store.recall_data_v2) return;
   let data; try { data = JSON.parse(store.recall_data_v2); } catch (e) { return; }
   const practices = Array.isArray(data.practices)
-    ? data.practices.filter((p) => p && !p.archivedAt) : [];
+    ? data.practices.filter((p) => p && !p.archivedAt && !p.archived_at
+      && (!p.cadence || p.cadence === "daily")) : [];
   if (!practices.length) return;
   const now = new Date();
   const today = dayKey(now);
@@ -54,7 +55,8 @@ async function showPracticeReminders(force) {
 
   for (const p of practices) {
     if (done.has(p.id)) continue;
-    const times = Array.isArray(p.reminders) ? p.reminders : [];
+    const times = Array.isArray(p.reminder_times) ? p.reminder_times
+      : Array.isArray(p.reminders) ? p.reminders : [];
     for (const time of times) {
       const parts = String(time).split(":").map(Number);
       if (parts.length !== 2 || parts.some(Number.isNaN)) continue;
@@ -63,7 +65,8 @@ async function showPracticeReminders(force) {
       const key = today + "." + p.id + "." + time;
       if (!force && sent[key]) continue;
       await self.registration.showNotification("Recall · Everyday", {
-        body: (p.sourceTitle || p.remember || "Idea") + "\n" + (p.execution || "Open your plan"),
+        body: (p.sourceTitle || p.daily_display_sentence || p.remember || "Idea") + "\n" +
+          (p.implementation_action || p.execution || "Open your plan"),
         tag: "recall-practice-" + p.id + "-" + time,
         icon: "./icons/icon-192.png",
         badge: "./icons/icon-192.png",
